@@ -1,0 +1,16 @@
+*.d
+*.o
+*.res
+*.exe
+*.dll
+*.directory
+*.png
+*.jpg
+*.jpeg
+*.obj
+**/.vs/**
+**/Debug/**
+*.opendb
+*.db
+VulkanTutorial/shaders/compile.bat
+*.spv
