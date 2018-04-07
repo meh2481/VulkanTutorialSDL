@@ -7,6 +7,7 @@
 #include <functional>
 #include <cstdlib>
 #include <vector>
+#include <map>
 
 #define WIDTH 800
 #define HEIGHT 600
@@ -150,28 +151,31 @@ private:
             std::cout << "No physical device has Vulkan support" << std::endl;
             exit(1);
         }
-        std::cout << "Found " << deviceCount << " physical devices" << std::endl;
+        std::cout << "Found " << deviceCount << " physical device(s)" << std::endl;
         std::vector<VkPhysicalDevice> devices(deviceCount);
         vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
 
         //Find suitable device
+        std::multimap<int, VkPhysicalDevice> candidates;
+
         for(const auto& device : devices)
         {
-            if(isDeviceSuitable(device))
-            {
-                physicalDevice = device;
-                break;
-            }
+            //TODO: Let user select device as a config option, or better yet parellize across all GPUs
+            int score = rateDeviceSuitability(device);
+            candidates.insert(std::make_pair(score, device));
         }
 
-        if(physicalDevice == VK_NULL_HANDLE)
+        // Check if the best candidate is suitable at all
+        if(candidates.rbegin()->first > 0)
+            physicalDevice = candidates.rbegin()->second;
+        else
         {
             std::cout << "Failed to find a suitable GPU" << std::endl;
             exit(1);
         }
     }
 
-    bool isDeviceSuitable(VkPhysicalDevice device)
+    int rateDeviceSuitability(VkPhysicalDevice device)
     {
         VkPhysicalDeviceProperties deviceProperties;
         vkGetPhysicalDeviceProperties(device, &deviceProperties);
@@ -180,8 +184,20 @@ private:
         VkPhysicalDeviceFeatures deviceFeatures;
         vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
 
+        int score = 0;
 
-        return deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && deviceFeatures.geometryShader;
+        // Discrete GPUs have a significant performance advantage
+        if(deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
+            score += 2048;
+
+        // Maximum possible size of textures affects graphics quality
+        score += deviceProperties.limits.maxImageDimension2D;
+
+        // Application can't function without geometry shaders
+        if(!deviceFeatures.geometryShader)
+            return 0;
+
+        return score;
     }
 
     void mainLoop()
