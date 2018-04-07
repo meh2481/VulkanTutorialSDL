@@ -10,20 +10,61 @@
 
 #define WIDTH 800
 #define HEIGHT 600
+#define APPLICATION_NAME "Vulkan SDL"
 
 #define MAJOR_VERSION 1
 #define MINOR_VERSION 0
 #define POINT_VERSION 0
+
+#define VULKAN_API_VERSION VK_API_VERSION_1_1
+
+const std::vector<const char*> validationLayers = {
+    "VK_LAYER_LUNARG_standard_validation"
+};
+
+#ifndef NDEBUG
+#define ENABLE_VALIDATION_LAYERS
+
+VkResult createDebugReportCallbackEXT(VkInstance instance, const VkDebugReportCallbackCreateInfoEXT* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkDebugReportCallbackEXT* pCallback)
+{
+    auto func = (PFN_vkCreateDebugReportCallbackEXT)vkGetInstanceProcAddr(instance, "vkCreateDebugReportCallbackEXT");
+    if(func != NULL)
+        return func(instance, pCreateInfo, pAllocator, pCallback);
+    else
+        return VK_ERROR_EXTENSION_NOT_PRESENT;
+}
+
+void destroyDebugReportCallbackEXT(VkInstance instance, VkDebugReportCallbackEXT callback, const VkAllocationCallbacks* pAllocator)
+{
+    auto func = (PFN_vkDestroyDebugReportCallbackEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugReportCallbackEXT");
+    if(func != NULL)
+        func(instance, callback, pAllocator);
+}
+#endif
+
+//#define PAUSE_HACK
+#ifdef PAUSE_HACK
+void pause()
+{
+    system("pause");
+}
+#endif
 
 class HelloTriangleApplication
 {
 
     SDL_Window* window;
     VkInstance instance;
+#ifdef ENABLE_VALIDATION_LAYERS
+    VkDebugReportCallbackEXT callback;
+#endif // ENABLE_VALIDATION_LAYERS
 
 public:
     void run()
     {
+#ifdef PAUSE_HACK
+        atexit(pause);
+#endif
         initWindow();
         initVulkan();
         mainLoop();
@@ -31,6 +72,38 @@ public:
     }
 
 private:
+
+#ifdef ENABLE_VALIDATION_LAYERS
+    static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
+        VkDebugReportFlagsEXT flags,
+        VkDebugReportObjectTypeEXT objType,
+        uint64_t obj,
+        size_t location,
+        int32_t code,
+        const char* layerPrefix,
+        const char* msg,
+        void* userData)
+    {
+
+        std::cout << "Validation layer: " << msg << std::endl;
+
+        return VK_FALSE;
+    }
+
+    void setupDebugCallback()
+    {
+        VkDebugReportCallbackCreateInfoEXT createInfo = {};
+        createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT;
+        createInfo.flags = VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT;
+        createInfo.pfnCallback = debugCallback;
+
+        if(createDebugReportCallbackEXT(instance, &createInfo, NULL, &callback) != VK_SUCCESS)
+        {
+            std::cout << "failed to set up debug callback!" << std::endl;
+            exit(1);
+        }
+    }
+#endif
 
     void initWindow()
     {
@@ -42,7 +115,7 @@ private:
         }
         atexit(SDL_Quit);
 
-        window = SDL_CreateWindow("Vulkan SDL",
+        window = SDL_CreateWindow(APPLICATION_NAME,
             SDL_WINDOWPOS_UNDEFINED,
             SDL_WINDOWPOS_UNDEFINED,
             WIDTH,
@@ -59,6 +132,9 @@ private:
     void initVulkan()
     {
         createInstance();
+#ifdef ENABLE_VALIDATION_LAYERS
+        setupDebugCallback();
+#endif // ENABLE_VALIDATION_LAYERS
     }
 
     void mainLoop()
@@ -79,6 +155,9 @@ private:
 
     void cleanup()
     {
+#ifdef ENABLE_VALIDATION_LAYERS
+        destroyDebugReportCallbackEXT(instance, callback, NULL);
+#endif // ENABLE_VALIDATION_LAYERS
         vkDestroyInstance(instance, NULL);
 
         SDL_Vulkan_UnloadLibrary();
@@ -88,28 +167,28 @@ private:
 
     void createInstance()
     {
+#ifdef ENABLE_VALIDATION_LAYERS
+        if(!checkValidationLayerSupport())
+        {
+            std::cout << "No validation layers supported" << std::endl;
+            exit(1);
+        }
+#endif
+
         //Create application info struct
         VkApplicationInfo appInfo = {};
         appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-        appInfo.pApplicationName = "Vulkan SDL";
+        appInfo.pApplicationName = APPLICATION_NAME;
         appInfo.applicationVersion = VK_MAKE_VERSION(MAJOR_VERSION, MINOR_VERSION, POINT_VERSION);
         appInfo.pEngineName = "No Engine";
         appInfo.engineVersion = VK_MAKE_VERSION(MAJOR_VERSION, MINOR_VERSION, POINT_VERSION);
-        appInfo.apiVersion = VK_API_VERSION_1_1;
+        appInfo.apiVersion = VULKAN_API_VERSION;
 
-        //Get required extensions for SDL (https://gist.github.com/rcgordon/ad23f873393423e1f1069502b92ad035)
+        //Get required extensions
         unsigned int count = 0;
-        const char **names = NULL;
         SDL_Vulkan_GetInstanceExtensions(window, &count, NULL);
-        names = new const char *[count];
-        SDL_Vulkan_GetInstanceExtensions(window, &count, names);
-
-        //Show required extensions for SDL
-        std::cout << "Required Extensions:" << std::endl;
-        for(unsigned int i = 0; i < count; i++)
-        {
-            std::cout << names[i] << std::endl;
-        }
+        const char **names = new const char *[count];
+        std::vector<const char*> requiredExtensions = getRequiredExtensions(names, count);
 
         //Show available extensions
         uint32_t extensionCount = 0;
@@ -126,9 +205,14 @@ private:
         VkInstanceCreateInfo createInfo = {};
         createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
         createInfo.pApplicationInfo = &appInfo;
-        createInfo.enabledExtensionCount = count;
-        createInfo.ppEnabledExtensionNames = names;
+        createInfo.enabledExtensionCount = requiredExtensions.size();
+        createInfo.ppEnabledExtensionNames = requiredExtensions.data();
+#ifdef ENABLE_VALIDATION_LAYERS
+        createInfo.enabledLayerCount = validationLayers.size();
+        createInfo.ppEnabledLayerNames = validationLayers.data();
+#else
         createInfo.enabledLayerCount = 0;
+#endif
         if(vkCreateInstance(&createInfo, NULL, &instance) != VK_SUCCESS)
         {
             std::cout << "Error creating Vulkan instance" << std::endl;
@@ -138,6 +222,58 @@ private:
         //Cleanup allocated memory
         delete[] names;
     }
+
+    std::vector<const char*> getRequiredExtensions(const char **names, unsigned int count)
+    {
+        //Get required extensions for SDL (https://gist.github.com/rcgordon/ad23f873393423e1f1069502b92ad035)
+        SDL_Vulkan_GetInstanceExtensions(window, &count, names);
+
+        //Show required extensions for SDL
+        std::cout << "Required Extensions:" << std::endl;
+        for(unsigned int i = 0; i < count; i++)
+        {
+            std::cout << names[i] << std::endl;
+        }
+
+        std::vector<const char*> extensions(names, names + count);
+
+#ifdef ENABLE_VALIDATION_LAYERS
+        extensions.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
+#endif
+
+        return extensions;
+    }
+
+#ifdef ENABLE_VALIDATION_LAYERS
+    bool checkValidationLayerSupport()
+    {
+        uint32_t layerCount;
+        vkEnumerateInstanceLayerProperties(&layerCount, NULL);
+
+        std::vector<VkLayerProperties> availableLayers(layerCount);
+        vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
+
+        for(const char* layerName : validationLayers)
+        {
+            bool layerFound = false;
+
+            for(const auto& layerProperties : availableLayers)
+            {
+                if(strcmp(layerName, layerProperties.layerName) == 0)
+                {
+                    layerFound = true;
+                    break;
+                }
+            }
+
+            if(!layerFound)
+                return false;
+        }
+
+        return true;
+    }
+#endif
+
 };
 
 #ifdef _WIN32
