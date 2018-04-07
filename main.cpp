@@ -104,6 +104,8 @@ private:
     VkRenderPass renderPass;
     VkPipeline graphicsPipeline;
     std::vector<VkFramebuffer> swapChainFramebuffers;
+    VkCommandPool commandPool;
+    std::vector<VkCommandBuffer> commandBuffers;
 
 public:
     //Public member functions
@@ -209,6 +211,76 @@ private:
         createRenderPass();
         createGraphicsPipeline();
         createFramebuffers();
+        createCommandPool();
+        createCommandBuffers();
+    }
+
+    void createCommandBuffers()
+    {
+        //Allocate command buffer
+        commandBuffers.resize(swapChainFramebuffers.size());
+
+        VkCommandBufferAllocateInfo allocInfo = {};
+        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.commandPool = commandPool;
+        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandBufferCount = (uint32_t)commandBuffers.size();
+
+        if(vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data()) != VK_SUCCESS)
+        {
+            std::cout << "Failed to allocate command buffers" << std::endl;
+            exit(1);
+        }
+
+        for(size_t i = 0; i < commandBuffers.size(); i++)
+        {
+            //Start buffer recording
+            VkCommandBufferBeginInfo beginInfo = {};
+            beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
+            beginInfo.pInheritanceInfo = NULL;
+
+            vkBeginCommandBuffer(commandBuffers[i], &beginInfo);
+
+            //Start render pass
+            VkRenderPassBeginInfo renderPassInfo = {};
+            renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            renderPassInfo.renderPass = renderPass;
+            renderPassInfo.framebuffer = swapChainFramebuffers[i];
+            renderPassInfo.renderArea.offset = { 0, 0 };
+            renderPassInfo.renderArea.extent = swapChainExtent;
+            VkClearValue clearColor = { 0.0f, 0.0f, 0.0f, 1.0f };
+            renderPassInfo.clearValueCount = 1;
+            renderPassInfo.pClearValues = &clearColor;
+            vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+            //Draw
+            vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+            vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
+            vkCmdEndRenderPass(commandBuffers[i]);
+
+            if(vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS)
+            {
+                std::cout << "Failed to record command buffer" << std::endl;
+                exit(1);
+            }
+        }
+    }
+
+    void createCommandPool()
+    {
+        QueueFamilyIndices queueFamilyIndices = findQueueFamilies(physicalDevice);
+
+        VkCommandPoolCreateInfo poolInfo = {};
+        poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily;
+        poolInfo.flags = 0;
+
+        if(vkCreateCommandPool(device, &poolInfo, NULL, &commandPool) != VK_SUCCESS)
+        {
+            std::cout << "Failed to create command pool" << std::endl;
+            exit(1);
+        }
     }
 
     void createFramebuffers()
@@ -830,6 +902,7 @@ private:
 
     void cleanup()
     {
+        vkDestroyCommandPool(device, commandPool, NULL);
         for(auto framebuffer : swapChainFramebuffers)
             vkDestroyFramebuffer(device, framebuffer, NULL);
         vkDestroyPipeline(device, graphicsPipeline, NULL);
