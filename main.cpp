@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <vector>
 #include <map>
+#include <set>
 
 //Application-specific defines
 #define WIDTH 800
@@ -25,10 +26,11 @@
 struct QueueFamilyIndices
 {
     int graphicsFamily = -1;
+    int presentFamily = -1;
 
     bool isComplete()
     {
-        return graphicsFamily >= 0;
+        return graphicsFamily >= 0 && presentFamily >= 0;
     }
 };
 
@@ -78,6 +80,8 @@ private:
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;   //Implicitly destroyed when VkInstance is
     VkDevice device;
     VkQueue graphicsQueue;
+    VkSurfaceKHR surface;
+    VkQueue presentQueue;
 
 public:
     void run()
@@ -144,7 +148,7 @@ private:
 
         if(window == NULL)
         {
-            std::cout << "Couldn't set video mode: " << SDL_GetError() << std::endl;
+            std::cout << "Couldn\'t set video mode: " << SDL_GetError() << std::endl;
             exit(1);
         }
     }
@@ -155,15 +159,37 @@ private:
 #ifdef ENABLE_VALIDATION_LAYERS
         setupDebugCallback();
 #endif // ENABLE_VALIDATION_LAYERS
+        createSurface();
         pickPhysicalDevice();
         createLogicalDevice();
+    }
+
+    void createSurface()
+    {
+        if(!SDL_Vulkan_CreateSurface(window, instance, &surface))
+        {
+            std::cout << "Couldn\'t create window surface: " << SDL_GetError() << std::endl;
+            exit(1);
+        }
     }
 
     void createLogicalDevice()
     {
         QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 
+        std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
+        std::set<int> uniqueQueueFamilies = { indices.graphicsFamily, indices.presentFamily };
+
         float queuePriority = QUEUE_PRIORITY;   //We probably won't care about queue priority ever
+        for(int queueFamily : uniqueQueueFamilies)
+        {
+            VkDeviceQueueCreateInfo queueCreateInfo = {};
+            queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+            queueCreateInfo.queueFamilyIndex = queueFamily;
+            queueCreateInfo.queueCount = 1;
+            queueCreateInfo.pQueuePriorities = &queuePriority;
+            queueCreateInfos.push_back(queueCreateInfo);
+        }
 
         VkDeviceQueueCreateInfo queueCreateInfo = {};
         queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
@@ -176,7 +202,8 @@ private:
         VkDeviceCreateInfo createInfo = {};
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
         createInfo.pQueueCreateInfos = &queueCreateInfo;
-        createInfo.queueCreateInfoCount = 1;
+        createInfo.queueCreateInfoCount = queueCreateInfos.size();
+        createInfo.pQueueCreateInfos = queueCreateInfos.data();
         createInfo.pEnabledFeatures = &deviceFeatures;
         createInfo.enabledExtensionCount = 0;
 #ifdef ENABLE_VALIDATION_LAYERS
@@ -193,6 +220,7 @@ private:
         }
 
         vkGetDeviceQueue(device, indices.graphicsFamily, 0, &graphicsQueue);
+        vkGetDeviceQueue(device, indices.presentFamily, 0, &presentQueue);
     }
 
     void pickPhysicalDevice()
@@ -274,6 +302,11 @@ private:
             if(queueFamily.queueCount > 0 && queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)
                 indices.graphicsFamily = i;
 
+            VkBool32 presentSupport = false;
+            vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
+            if(queueFamily.queueCount > 0 && presentSupport)
+                indices.presentFamily = i;
+
             if(indices.isComplete())
                 break;
 
@@ -305,6 +338,7 @@ private:
 #ifdef ENABLE_VALIDATION_LAYERS
         destroyDebugReportCallbackEXT(instance, callback, NULL);
 #endif // ENABLE_VALIDATION_LAYERS
+        vkDestroySurfaceKHR(instance, surface, NULL);
         vkDestroyInstance(instance, NULL);
 
         SDL_Vulkan_UnloadLibrary();
