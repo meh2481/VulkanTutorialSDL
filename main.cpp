@@ -19,12 +19,23 @@
 
 #define VULKAN_API_VERSION VK_API_VERSION_1_1
 
-const std::vector<const char*> validationLayers = {
-    "VK_LAYER_LUNARG_standard_validation"
+struct QueueFamilyIndices
+{
+    int graphicsFamily = -1;
+
+    bool isComplete()
+    {
+        return graphicsFamily >= 0;
+    }
 };
 
 #ifndef NDEBUG
+//Enable validation layers in debug mode
 #define ENABLE_VALIDATION_LAYERS
+
+const std::vector<const char*> validationLayers = {
+    "VK_LAYER_LUNARG_standard_validation"
+};
 
 VkResult createDebugReportCallbackEXT(VkInstance instance, const VkDebugReportCallbackCreateInfoEXT* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkDebugReportCallbackEXT* pCallback)
 {
@@ -197,7 +208,37 @@ private:
         if(!deviceFeatures.geometryShader)
             return 0;
 
+        //Need device to be able to process commands we want to use
+        QueueFamilyIndices indices = findQueueFamilies(device);
+        if(!indices.isComplete())
+            return 0;
+
         return score;
+    }
+
+    QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device)
+    {
+        QueueFamilyIndices indices;
+
+        uint32_t queueFamilyCount = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
+
+        std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+        vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
+
+        int i = 0;
+        for(const auto& queueFamily : queueFamilies)
+        {
+            if(queueFamily.queueCount > 0 && queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)
+                indices.graphicsFamily = i;
+
+            if(indices.isComplete())
+                break;
+
+            i++;
+        }
+
+        return indices;
     }
 
     void mainLoop()
