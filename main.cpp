@@ -10,6 +10,8 @@
 #include <map>
 #include <set>
 #include <algorithm>
+#include <fstream>
+
 
 //Application-specific defines
 #define WIDTH 800
@@ -146,6 +148,25 @@ private:
     }
 #endif
 
+    static std::vector<char> readFile(const std::string& filename)
+    {
+        std::ifstream file(filename, std::ios::ate | std::ios::binary);
+
+        if(!file.is_open())
+        {
+            std::cout << "Failed to open file " << filename.c_str() << std::endl;
+            exit(1);
+        }
+
+        size_t fileSize = (size_t)file.tellg();
+        std::vector<char> buffer(fileSize);
+        file.seekg(0);
+        file.read(buffer.data(), fileSize);
+        file.close();
+
+        return buffer;
+    }
+
     void initWindow()
     {
         SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS);
@@ -175,12 +196,62 @@ private:
         createInstance();
 #ifdef ENABLE_VALIDATION_LAYERS
         setupDebugCallback();
-#endif // ENABLE_VALIDATION_LAYERS
+#endif
         createSurface();
         pickPhysicalDevice();
         createLogicalDevice();
         createSwapChain();
         createImageView();
+        createGraphicsPipeline();
+    }
+
+    void createGraphicsPipeline()
+    {
+        std::vector<char> vertShaderCode = readFile("shaders/vert.spv");
+        std::vector<char> fragShaderCode = readFile("shaders/frag.spv");
+
+        std::cout << "Vert shader length: " << vertShaderCode.size() << std::endl;
+        std::cout << "Frag shader length: " << fragShaderCode.size() << std::endl;
+
+        VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+        VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+        VkPipelineShaderStageCreateInfo vertShaderStageInfo = {};
+        vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+        vertShaderStageInfo.module = vertShaderModule;
+        vertShaderStageInfo.pName = "main";
+
+        VkPipelineShaderStageCreateInfo fragShaderStageInfo = {};
+        fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        fragShaderStageInfo.module = fragShaderModule;
+        fragShaderStageInfo.pName = "main";
+
+        VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
+
+
+        //...
+
+
+        vkDestroyShaderModule(device, fragShaderModule, NULL);
+        vkDestroyShaderModule(device, vertShaderModule, NULL);
+    }
+
+    VkShaderModule createShaderModule(const std::vector<char>& code)
+    {
+        VkShaderModuleCreateInfo createInfo = {};
+        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        createInfo.codeSize = code.size();
+        createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+
+        VkShaderModule shaderModule;
+        if(vkCreateShaderModule(device, &createInfo, NULL, &shaderModule) != VK_SUCCESS)
+        {
+            std::cout << "Failed to create shader module" << std::endl;
+            exit(1);
+        }
+        return shaderModule;
     }
 
     void createImageView()
@@ -549,7 +620,7 @@ private:
         vkDestroyDevice(device, NULL);
 #ifdef ENABLE_VALIDATION_LAYERS
         destroyDebugReportCallbackEXT(instance, callback, NULL);
-#endif // ENABLE_VALIDATION_LAYERS
+#endif
         vkDestroySurfaceKHR(instance, surface, NULL);
         vkDestroyInstance(instance, NULL);
 
