@@ -106,6 +106,8 @@ private:
     std::vector<VkFramebuffer> swapChainFramebuffers;
     VkCommandPool commandPool;
     std::vector<VkCommandBuffer> commandBuffers;
+    VkSemaphore imageAvailableSemaphore;
+    VkSemaphore renderFinishedSemaphore;
 
 public:
     //Public member functions
@@ -213,6 +215,20 @@ private:
         createFramebuffers();
         createCommandPool();
         createCommandBuffers();
+        createSemaphores();
+    }
+
+    void createSemaphores()
+    {
+        VkSemaphoreCreateInfo semaphoreInfo = {};
+        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+        if(vkCreateSemaphore(device, &semaphoreInfo, NULL, &imageAvailableSemaphore) != VK_SUCCESS ||
+            vkCreateSemaphore(device, &semaphoreInfo, NULL, &renderFinishedSemaphore) != VK_SUCCESS)
+        {
+            std::cout << "Failed to create semaphores" << std::endl;
+            exit(1);
+        }
     }
 
     void createCommandBuffers()
@@ -333,6 +349,15 @@ private:
         subpass.colorAttachmentCount = 1;
         subpass.pColorAttachments = &colorAttachmentRef;
 
+        //Create subpass dependencies
+        VkSubpassDependency dependency = {};
+        dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+        dependency.dstSubpass = 0;
+        dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;    //Wait for the color attachment output stage itself
+        dependency.srcAccessMask = 0;
+        dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
         //Create render pass
         VkRenderPassCreateInfo renderPassInfo = {};
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -340,6 +365,8 @@ private:
         renderPassInfo.pAttachments = &colorAttachment;
         renderPassInfo.subpassCount = 1;
         renderPassInfo.pSubpasses = &subpass;
+        renderPassInfo.dependencyCount = 1;
+        renderPassInfo.pDependencies = &dependency;
 
         if(vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS)
         {
@@ -897,11 +924,66 @@ private:
                 if(event.type == SDL_QUIT || (event.type == SDL_KEYDOWN && event.key.keysym.scancode == SDL_SCANCODE_ESCAPE))
                     return;
             }
+
+            //Draw
+            drawFrame();
         }
+    }
+
+    void drawFrame()
+    {
+        //Get a new image from the swapchain
+        uint32_t imageIndex;
+        vkAcquireNextImageKHR(device, swapChain, std::numeric_limits<uint64_t>::max(), imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+
+        //Submit the command buffer
+        VkSubmitInfo submitInfo = {};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+        VkSemaphore waitSemaphores[] = { imageAvailableSemaphore };
+        VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+        submitInfo.waitSemaphoreCount = 1;
+        submitInfo.pWaitSemaphores = waitSemaphores;
+        submitInfo.pWaitDstStageMask = waitStages;
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &commandBuffers[imageIndex];
+        VkSemaphore signalSemaphores[] = { renderFinishedSemaphore };
+        submitInfo.signalSemaphoreCount = 1;
+        submitInfo.pSignalSemaphores = signalSemaphores;
+
+        if(vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS)
+        {
+            std::cout << "Failed to submit draw command buffer" << std::endl;
+            exit(1);
+        }
+
+        //Presentation
+        VkPresentInfoKHR presentInfo = {};
+        presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+
+        presentInfo.waitSemaphoreCount = 1;
+        presentInfo.pWaitSemaphores = signalSemaphores;
+        VkSwapchainKHR swapChains[] = { swapChain };
+        presentInfo.swapchainCount = 1;
+        presentInfo.pSwapchains = swapChains;
+        presentInfo.pImageIndices = &imageIndex;
+        presentInfo.pResults = NULL;
+
+        vkQueuePresentKHR(presentQueue, &presentInfo);
+
+#ifdef ENABLE_VALIDATION_LAYERS
+        //Fix memory leak in validation layer by explicitly syncronizing with GPU
+        vkQueueWaitIdle(presentQueue);
+#endif
     }
 
     void cleanup()
     {
+        //Wait for operations to finish before cleanup
+        vkDeviceWaitIdle(device);
+
+        vkDestroySemaphore(device, renderFinishedSemaphore, NULL);
+        vkDestroySemaphore(device, imageAvailableSemaphore, NULL);
         vkDestroyCommandPool(device, commandPool, NULL);
         for(auto framebuffer : swapChainFramebuffers)
             vkDestroyFramebuffer(device, framebuffer, NULL);
