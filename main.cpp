@@ -190,7 +190,7 @@ private:
             SDL_WINDOWPOS_UNDEFINED,
             WIDTH,
             HEIGHT,
-            SDL_WINDOW_SHOWN | SDL_WINDOW_VULKAN);
+            SDL_WINDOW_SHOWN | SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
 
         if(window == NULL)
         {
@@ -209,7 +209,7 @@ private:
         pickPhysicalDevice();
         createLogicalDevice();
         createSwapChain();
-        createImageView();
+        createImageViews();
         createRenderPass();
         createGraphicsPipeline();
         createFramebuffers();
@@ -380,8 +380,8 @@ private:
         std::vector<char> vertShaderCode = readFile("shaders/vert.spv");
         std::vector<char> fragShaderCode = readFile("shaders/frag.spv");
 
-        std::cout << "Vert shader length: " << vertShaderCode.size() << std::endl;
-        std::cout << "Frag shader length: " << fragShaderCode.size() << std::endl;
+        //std::cout << "Vert shader length: " << vertShaderCode.size() << std::endl;
+        //std::cout << "Frag shader length: " << fragShaderCode.size() << std::endl;
 
         VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
         VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
@@ -569,7 +569,7 @@ private:
         return shaderModule;
     }
 
-    void createImageView()
+    void createImageViews()
     {
         swapChainImageViews.resize(swapChainImages.size());
         for(size_t i = 0; i < swapChainImages.size(); i++)
@@ -595,6 +595,21 @@ private:
                 exit(1);
             }
         }
+    }
+
+    void recreateSwapChain()
+    {
+        //Wait until everything is done
+        vkDeviceWaitIdle(device);
+
+        cleanupSwapChain();
+
+        createSwapChain();
+        createImageViews();
+        createRenderPass();
+        createGraphicsPipeline();
+        createFramebuffers();
+        createCommandBuffers();
     }
 
     void createSwapChain()
@@ -828,7 +843,10 @@ private:
             return capabilities.currentExtent;
         else
         {
-            VkExtent2D actualExtent = { WIDTH, HEIGHT };
+            int width = WIDTH;
+            int height = HEIGHT;
+            SDL_Vulkan_GetDrawableSize(window, &width, &height);
+            VkExtent2D actualExtent = { (uint32_t)width, (uint32_t)height };
 
             actualExtent.width = std::max(capabilities.minImageExtent.width, std::min(capabilities.maxImageExtent.width, actualExtent.width));
             actualExtent.height = std::max(capabilities.minImageExtent.height, std::min(capabilities.maxImageExtent.height, actualExtent.height));
@@ -923,6 +941,9 @@ private:
                 //Exit by clicking X in window or pressing ESC
                 if(event.type == SDL_QUIT || (event.type == SDL_KEYDOWN && event.key.keysym.scancode == SDL_SCANCODE_ESCAPE))
                     return;
+
+                if(event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)
+                    resizeWindow(event.window.data1, event.window.data2);
             }
 
             //Draw
@@ -930,11 +951,28 @@ private:
         }
     }
 
+    void resizeWindow(int width, int height)
+    {
+        recreateSwapChain();
+    }
+
     void drawFrame()
     {
         //Get a new image from the swapchain
         uint32_t imageIndex;
-        vkAcquireNextImageKHR(device, swapChain, std::numeric_limits<uint64_t>::max(), imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+        VkResult result = vkAcquireNextImageKHR(device, swapChain, std::numeric_limits<uint64_t>::max(), imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+
+        if(result == VK_ERROR_OUT_OF_DATE_KHR)
+        {
+            //Out of date; recreate swapchain and cancel this draw pass
+            recreateSwapChain();
+            return;
+        }
+        else if(result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
+        {
+            std::cout << "Failed to acquire swap chain image" << std::endl;
+            exit(1);
+        }
 
         //Submit the command buffer
         VkSubmitInfo submitInfo = {};
@@ -969,7 +1007,16 @@ private:
         presentInfo.pImageIndices = &imageIndex;
         presentInfo.pResults = NULL;
 
-        vkQueuePresentKHR(presentQueue, &presentInfo);
+        result = vkQueuePresentKHR(presentQueue, &presentInfo);
+
+        //Recreate swapchain if needed or suboptimal
+        if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
+            recreateSwapChain();
+        else if(result != VK_SUCCESS)
+        {
+            std::cout << "Failed to present swap chain image" << std::endl;
+            exit(1);
+        }
 
 #ifdef ENABLE_VALIDATION_LAYERS
         //Fix memory leak in validation layer by explicitly syncronizing with GPU
@@ -977,22 +1024,29 @@ private:
 #endif
     }
 
-    void cleanup()
+    void cleanupSwapChain()
     {
-        //Wait for operations to finish before cleanup
-        vkDeviceWaitIdle(device);
-
-        vkDestroySemaphore(device, renderFinishedSemaphore, NULL);
-        vkDestroySemaphore(device, imageAvailableSemaphore, NULL);
-        vkDestroyCommandPool(device, commandPool, NULL);
         for(auto framebuffer : swapChainFramebuffers)
             vkDestroyFramebuffer(device, framebuffer, NULL);
+        vkFreeCommandBuffers(device, commandPool, commandBuffers.size(), commandBuffers.data());
         vkDestroyPipeline(device, graphicsPipeline, NULL);
         vkDestroyPipelineLayout(device, pipelineLayout, NULL);
         vkDestroyRenderPass(device, renderPass, NULL);
         for(auto imageView : swapChainImageViews)
             vkDestroyImageView(device, imageView, NULL);
         vkDestroySwapchainKHR(device, swapChain, NULL);
+    }
+
+    void cleanup()
+    {
+        //Wait for operations to finish before cleanup
+        vkDeviceWaitIdle(device);
+
+        cleanupSwapChain();
+
+        vkDestroySemaphore(device, renderFinishedSemaphore, NULL);
+        vkDestroySemaphore(device, imageAvailableSemaphore, NULL);
+        vkDestroyCommandPool(device, commandPool, NULL);
         vkDestroyDevice(device, NULL);
 #ifdef ENABLE_VALIDATION_LAYERS
         destroyDebugReportCallbackEXT(instance, callback, NULL);
@@ -1123,8 +1177,6 @@ int main(int argc, char** argv)
 #endif
 {
     HelloTriangleApplication app;
-
     app.run();
-
     return EXIT_SUCCESS;
 }
