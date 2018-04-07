@@ -53,11 +53,14 @@ void pause()
 class HelloTriangleApplication
 {
 
+private:
+    //Member variables
     SDL_Window* window;
     VkInstance instance;
 #ifdef ENABLE_VALIDATION_LAYERS
     VkDebugReportCallbackEXT callback;
 #endif // ENABLE_VALIDATION_LAYERS
+    VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;   //Implicitly destroyed when VkInstance is
 
 public:
     void run()
@@ -135,6 +138,50 @@ private:
 #ifdef ENABLE_VALIDATION_LAYERS
         setupDebugCallback();
 #endif // ENABLE_VALIDATION_LAYERS
+        pickPhysicalDevice();
+    }
+
+    void pickPhysicalDevice()
+    {
+        uint32_t deviceCount = 0;
+        vkEnumeratePhysicalDevices(instance, &deviceCount, NULL);
+        if(deviceCount == 0)
+        {
+            std::cout << "No physical device has Vulkan support" << std::endl;
+            exit(1);
+        }
+        std::cout << "Found " << deviceCount << " physical devices" << std::endl;
+        std::vector<VkPhysicalDevice> devices(deviceCount);
+        vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
+
+        //Find suitable device
+        for(const auto& device : devices)
+        {
+            if(isDeviceSuitable(device))
+            {
+                physicalDevice = device;
+                break;
+            }
+        }
+
+        if(physicalDevice == VK_NULL_HANDLE)
+        {
+            std::cout << "Failed to find a suitable GPU" << std::endl;
+            exit(1);
+        }
+    }
+
+    bool isDeviceSuitable(VkPhysicalDevice device)
+    {
+        VkPhysicalDeviceProperties deviceProperties;
+        vkGetPhysicalDeviceProperties(device, &deviceProperties);
+        std::cout << "Device name: " << deviceProperties.deviceName << std::endl;
+
+        VkPhysicalDeviceFeatures deviceFeatures;
+        vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
+
+
+        return deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && deviceFeatures.geometryShader;
     }
 
     void mainLoop()
