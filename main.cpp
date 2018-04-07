@@ -1078,11 +1078,19 @@ private:
         appInfo.engineVersion = VK_MAKE_VERSION(MAJOR_VERSION, MINOR_VERSION, POINT_VERSION);
         appInfo.apiVersion = VULKAN_API_VERSION;
 
-        //Get required extensions
+        //Get required extensions for SDL (https://gist.github.com/rcgordon/ad23f873393423e1f1069502b92ad035)
         unsigned int count = 0;
         SDL_Vulkan_GetInstanceExtensions(window, &count, NULL);
         const char **names = new const char *[count];
-        std::vector<const char*> requiredExtensions = getRequiredExtensions(names, count);
+        SDL_Vulkan_GetInstanceExtensions(window, &count, names);
+        //Show required extensions for SDL
+        std::cout << "Required Extensions:" << std::endl;
+        for(unsigned int i = 0; i < count; i++)
+            std::cout << names[i] << std::endl;
+        std::vector<const char*> requiredExtensions(names, names + count);
+#ifdef ENABLE_VALIDATION_LAYERS
+        requiredExtensions.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
+#endif
 
         //Show available extensions
         uint32_t extensionCount = 0;
@@ -1091,9 +1099,7 @@ private:
         vkEnumerateInstanceExtensionProperties(NULL, &extensionCount, extensions.data());
         std::cout << "Available extensions:" << std::endl;
         for(const auto& extension : extensions)
-        {
             std::cout << extension.extensionName << std::endl;
-        }
 
         //Create application instance info struct
         VkInstanceCreateInfo createInfo = {};
@@ -1115,27 +1121,6 @@ private:
 
         //Cleanup allocated memory
         delete[] names;
-    }
-
-    std::vector<const char*> getRequiredExtensions(const char **names, unsigned int count)
-    {
-        //Get required extensions for SDL (https://gist.github.com/rcgordon/ad23f873393423e1f1069502b92ad035)
-        SDL_Vulkan_GetInstanceExtensions(window, &count, names);
-
-        //Show required extensions for SDL
-        std::cout << "Required Extensions:" << std::endl;
-        for(unsigned int i = 0; i < count; i++)
-        {
-            std::cout << names[i] << std::endl;
-        }
-
-        std::vector<const char*> extensions(names, names + count);
-
-#ifdef ENABLE_VALIDATION_LAYERS
-        extensions.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
-#endif
-
-        return extensions;
     }
 
 #ifdef ENABLE_VALIDATION_LAYERS
