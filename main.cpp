@@ -9,6 +9,7 @@
 #include <vector>
 #include <map>
 
+//Application-specific defines
 #define WIDTH 800
 #define HEIGHT 600
 #define APPLICATION_NAME "Vulkan SDL"
@@ -17,7 +18,9 @@
 #define MINOR_VERSION 0
 #define POINT_VERSION 0
 
+//Vulkan-specific defines
 #define VULKAN_API_VERSION VK_API_VERSION_1_1
+#define QUEUE_PRIORITY 1.0f
 
 struct QueueFamilyIndices
 {
@@ -73,6 +76,8 @@ private:
     VkDebugReportCallbackEXT callback;
 #endif // ENABLE_VALIDATION_LAYERS
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;   //Implicitly destroyed when VkInstance is
+    VkDevice device;
+    VkQueue graphicsQueue;
 
 public:
     void run()
@@ -151,6 +156,43 @@ private:
         setupDebugCallback();
 #endif // ENABLE_VALIDATION_LAYERS
         pickPhysicalDevice();
+        createLogicalDevice();
+    }
+
+    void createLogicalDevice()
+    {
+        QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+
+        float queuePriority = QUEUE_PRIORITY;   //We probably won't care about queue priority ever
+
+        VkDeviceQueueCreateInfo queueCreateInfo = {};
+        queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queueCreateInfo.queueFamilyIndex = indices.graphicsFamily;
+        queueCreateInfo.queueCount = 1;
+        queueCreateInfo.pQueuePriorities = &queuePriority;
+
+        VkPhysicalDeviceFeatures deviceFeatures = {};
+
+        VkDeviceCreateInfo createInfo = {};
+        createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+        createInfo.pQueueCreateInfos = &queueCreateInfo;
+        createInfo.queueCreateInfoCount = 1;
+        createInfo.pEnabledFeatures = &deviceFeatures;
+        createInfo.enabledExtensionCount = 0;
+#ifdef ENABLE_VALIDATION_LAYERS
+        createInfo.enabledLayerCount = validationLayers.size();
+        createInfo.ppEnabledLayerNames = validationLayers.data();
+#else
+        createInfo.enabledLayerCount = 0;
+#endif
+
+        if(vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS)
+        {
+            std::cout << "Failed to create logical device!" << std::endl;
+            exit(1);
+        }
+
+        vkGetDeviceQueue(device, indices.graphicsFamily, 0, &graphicsQueue);
     }
 
     void pickPhysicalDevice()
@@ -199,7 +241,7 @@ private:
 
         // Discrete GPUs have a significant performance advantage
         if(deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
-            score += 2048;
+            score += 2048;  //Arbitrary increase in score so that discrete GPUs are favored more highly
 
         // Maximum possible size of textures affects graphics quality
         score += deviceProperties.limits.maxImageDimension2D;
@@ -259,6 +301,7 @@ private:
 
     void cleanup()
     {
+        vkDestroyDevice(device, NULL);
 #ifdef ENABLE_VALIDATION_LAYERS
         destroyDebugReportCallbackEXT(instance, callback, NULL);
 #endif // ENABLE_VALIDATION_LAYERS
