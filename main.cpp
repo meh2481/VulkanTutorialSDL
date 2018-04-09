@@ -139,10 +139,11 @@ class HelloTriangleApplication
 private:
     //Member variables
     SDL_Window* window;
-    VkInstance instance;
+
 #ifdef ENABLE_VALIDATION_LAYERS
     VkDebugReportCallbackEXT callback;
-#endif // ENABLE_VALIDATION_LAYERS
+#endif
+    VkInstance instance;
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;   //Implicitly destroyed when VkInstance is
     VkDevice device;
     VkQueue graphicsQueue;
@@ -170,6 +171,8 @@ private:
     VkDescriptorSet descriptorSet;
     VkImage textureImage;
     VkDeviceMemory textureImageMemory;
+    VkImageView textureImageView;
+    VkSampler textureSampler;
 
 public:
     //Public member functions
@@ -278,12 +281,69 @@ private:
         createFramebuffers();
         createCommandPool();
         createTextureImage();
+        createTextureImageView();
+        createTextureSampler();
         createVertIndexBuffers();
         createUniformBuffer();
         createDescriptorPool();
         createDescriptorSet();
         createCommandBuffers();
         createSemaphores();
+    }
+
+    void createTextureSampler()
+    {
+        VkSamplerCreateInfo samplerInfo = {};
+        samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        samplerInfo.magFilter = VK_FILTER_LINEAR;   //VK_FILTER_NEAREST for pixelly image
+        samplerInfo.minFilter = VK_FILTER_LINEAR;
+        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.anisotropyEnable = VK_TRUE;     //Possible config option for performance
+        samplerInfo.maxAnisotropy = 16;
+        samplerInfo.borderColor = VK_BORDER_COLOR_INT_TRANSPARENT_BLACK;
+        samplerInfo.unnormalizedCoordinates = VK_FALSE;
+        samplerInfo.compareEnable = VK_FALSE;
+        samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        samplerInfo.mipLodBias = 0.0f;
+        samplerInfo.minLod = 0.0f;
+        samplerInfo.maxLod = 0.0f;
+
+        if(vkCreateSampler(device, &samplerInfo, NULL, &textureSampler) != VK_SUCCESS)
+        {
+            std::cout << "Failed to create texture sampler" << std::endl;
+            exit(1);
+        }
+    }
+
+    void createTextureImageView()
+    {
+        textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_UNORM);
+    }
+
+    VkImageView createImageView(VkImage image, VkFormat format)
+    {
+        VkImageViewCreateInfo viewInfo = {};
+        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image = image;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = format;
+        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        viewInfo.subresourceRange.baseMipLevel = 0;
+        viewInfo.subresourceRange.levelCount = 1;
+        viewInfo.subresourceRange.baseArrayLayer = 0;
+        viewInfo.subresourceRange.layerCount = 1;
+
+        VkImageView imageView;
+        if(vkCreateImageView(device, &viewInfo, NULL, &imageView) != VK_SUCCESS)
+        {
+            std::cout << "Failed to create texture image view" << std::endl;
+            exit(1);
+        }
+
+        return imageView;
     }
 
     void createTextureImage()
@@ -1027,29 +1087,9 @@ private:
     void createImageViews()
     {
         swapChainImageViews.resize(swapChainImages.size());
-        for(size_t i = 0; i < swapChainImages.size(); i++)
-        {
-            VkImageViewCreateInfo createInfo = {};
-            createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-            createInfo.image = swapChainImages[i];
-            createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-            createInfo.format = swapChainImageFormat;
-            createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            createInfo.subresourceRange.baseMipLevel = 0;
-            createInfo.subresourceRange.levelCount = 1;
-            createInfo.subresourceRange.baseArrayLayer = 0;
-            createInfo.subresourceRange.layerCount = 1;
 
-            if(vkCreateImageView(device, &createInfo, NULL, &swapChainImageViews[i]) != VK_SUCCESS)
-            {
-                std::cout << "failed to create image views" << std::endl;
-                exit(1);
-            }
-        }
+        for(uint32_t i = 0; i < swapChainImages.size(); i++)
+            swapChainImageViews[i] = createImageView(swapChainImages[i], swapChainImageFormat);
     }
 
     void recreateSwapChain()
@@ -1159,6 +1199,7 @@ private:
         queueCreateInfo.pQueuePriorities = &queuePriority;
 
         VkPhysicalDeviceFeatures deviceFeatures = {};
+        deviceFeatures.samplerAnisotropy = VK_TRUE; //Config option: Not require this
 
         VkDeviceCreateInfo createInfo = {};
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -1237,7 +1278,7 @@ private:
         score += deviceProperties.limits.maxImageDimension2D;
 
         // Application can't function without geometry shaders
-        if(!deviceFeatures.geometryShader)
+        if(!deviceFeatures.geometryShader || !deviceFeatures.samplerAnisotropy) //Config option: Don't require ansitropic filtering
             return 0;
 
         //Need device to be able to process commands we want to use
@@ -1519,6 +1560,8 @@ private:
     {
         cleanupSwapChain();
 
+        vkDestroySampler(device, textureSampler, NULL);
+        vkDestroyImageView(device, textureImageView, NULL);
         vkDestroyImage(device, textureImage, NULL);
         vkFreeMemory(device, textureImageMemory, NULL);
         vkDestroyDescriptorPool(device, descriptorPool, NULL);
