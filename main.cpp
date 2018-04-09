@@ -1,7 +1,9 @@
 #include <SDL.h>
 #include <vulkan/vulkan.h>
 #include <SDL_vulkan.h>
+#define GLM_FORCE_RADIANS
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <iostream>
 #include <stdexcept>
@@ -73,6 +75,13 @@ struct Vertex
         attributeDescriptions[1].offset = offsetof(Vertex, color);
         return attributeDescriptions;
     }
+};
+
+struct UniformBufferObject
+{
+    glm::mat4 model;
+    glm::mat4 view;
+    glm::mat4 proj;
 };
 
 const std::vector<const char*> deviceExtensions = {
@@ -152,6 +161,11 @@ private:
     VkSemaphore renderFinishedSemaphore;
     VkBuffer combinedBuffer;
     VkDeviceMemory combinedBufferMemory;
+    VkBuffer uniformBuffer;
+    VkDeviceMemory uniformBufferMemory;
+    VkDescriptorSetLayout descriptorSetLayout;
+    VkDescriptorPool descriptorPool;
+    VkDescriptorSet descriptorSet;
 
 public:
     //Public member functions
@@ -255,12 +269,100 @@ private:
         createSwapChain();
         createImageViews();
         createRenderPass();
+        createDescriptorSetLayout();
         createGraphicsPipeline();
         createFramebuffers();
         createCommandPool();
         createVertIndexBuffers();
+        createUniformBuffer();
+        createDescriptorPool();
+        createDescriptorSet();
         createCommandBuffers();
         createSemaphores();
+    }
+
+    void createDescriptorSet()
+    {
+        //Create the descriptor set
+        VkDescriptorSetLayout layouts[] = { descriptorSetLayout };
+        VkDescriptorSetAllocateInfo allocInfo = {};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = descriptorPool;
+        allocInfo.descriptorSetCount = 1;
+        allocInfo.pSetLayouts = layouts;
+
+        if(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSet) != VK_SUCCESS)  //Note: Automagically freed
+        {
+            std::cout << "Failed to allocate descriptor set" << std::endl;
+            exit(1);
+        }
+
+        //Create descriptors
+        VkDescriptorBufferInfo bufferInfo = {};
+        bufferInfo.buffer = uniformBuffer;
+        bufferInfo.offset = 0;
+        bufferInfo.range = sizeof(UniformBufferObject);
+
+        VkWriteDescriptorSet descriptorWrite = {};
+        descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrite.dstSet = descriptorSet;
+        descriptorWrite.dstBinding = 0;
+        descriptorWrite.dstArrayElement = 0;
+        descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrite.descriptorCount = 1;
+        descriptorWrite.pBufferInfo = &bufferInfo;
+        descriptorWrite.pImageInfo = NULL;
+        descriptorWrite.pTexelBufferView = NULL;
+
+        vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, NULL);
+    }
+
+    void createDescriptorPool()
+    {
+        VkDescriptorPoolSize poolSize = {};
+        poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        poolSize.descriptorCount = 1;
+
+        VkDescriptorPoolCreateInfo poolInfo = {};
+        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        poolInfo.poolSizeCount = 1;
+        poolInfo.pPoolSizes = &poolSize;
+        poolInfo.maxSets = 1;
+
+        if(vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS)
+        {
+            std::cout << "Failed to create descriptor pool" << std::endl;
+            exit(1);
+        }
+    }
+
+    void createUniformBuffer()
+    {
+        VkDeviceSize bufferSize = sizeof(UniformBufferObject);
+        createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffer, uniformBufferMemory);
+    }
+
+    void createDescriptorSetLayout()
+    {
+        VkDescriptorSetLayoutBinding uboLayoutBinding = {};
+        uboLayoutBinding.binding = 0;
+        uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        uboLayoutBinding.descriptorCount = 1;
+        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        uboLayoutBinding.pImmutableSamplers = NULL;
+
+        VkDescriptorSetLayoutCreateInfo layoutInfo = {};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.bindingCount = 1;
+        layoutInfo.pBindings = &uboLayoutBinding;
+
+        if(vkCreateDescriptorSetLayout(device, &layoutInfo, NULL, &descriptorSetLayout) != VK_SUCCESS)
+        {
+            std::cout << "Failed to create descriptor set layout" << std::endl;
+            exit(1);
+        }
+
+        //TODO: Multiple descriptor sets via layout(set = 0, binding = 0) uniform UniformBufferObject { ... }
     }
 
     void createVertIndexBuffers()
@@ -445,7 +547,10 @@ private:
             vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
             vkCmdBindIndexBuffer(commandBuffers[i], combinedBuffer, 0, VK_INDEX_TYPE_UINT16);
 
-            vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+            //Bind descriptor sets
+            vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSet, 0, NULL);
+
+            vkCmdDrawIndexed(commandBuffers[i], (uint32_t)indices.size(), 1, 0, 0, 0);
             vkCmdEndRenderPass(commandBuffers[i]);
 
             if(vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS)
@@ -623,7 +728,7 @@ private:
         rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
         rasterizer.lineWidth = 1.0f;
         rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-        rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+        rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         rasterizer.depthBiasEnable = VK_FALSE;
         rasterizer.depthBiasConstantFactor = 0.0f;
         rasterizer.depthBiasClamp = 0.0f;
@@ -689,8 +794,8 @@ private:
         //Create pipeline layout
         VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        pipelineLayoutInfo.setLayoutCount = 0;
-        pipelineLayoutInfo.pSetLayouts = NULL;
+        pipelineLayoutInfo.setLayoutCount = 1;
+        pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
         pipelineLayoutInfo.pushConstantRangeCount = 0;
         pipelineLayoutInfo.pPushConstantRanges = NULL;
 
@@ -1119,9 +1224,32 @@ private:
                     resizeWindow(event.window.data1, event.window.data2);
             }
 
+            //Update uniforms
+            updateUniformBuffer();
+
             //Draw
             drawFrame();
         }
+    }
+
+    //TODO: Look into push constants instead for a more efficient way to pass frequently-changing values to the shader
+    void updateUniformBuffer()
+    {
+        //Get time in seconds since program start
+        float time = (float)SDL_GetTicks() / 1000.0f;
+
+        //Rotate view around center
+        UniformBufferObject ubo = {};
+        ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 10.0f);
+        ubo.proj[1][1] *= -1; //Flip y
+
+        //Copy memory
+        void* data;
+        vkMapMemory(device, uniformBufferMemory, 0, sizeof(ubo), 0, &data);
+        memcpy(data, &ubo, sizeof(ubo));
+        vkUnmapMemory(device, uniformBufferMemory);
     }
 
     void resizeWindow(int width, int height)
@@ -1217,6 +1345,10 @@ private:
     {
         cleanupSwapChain();
 
+        vkDestroyDescriptorPool(device, descriptorPool, NULL);
+        vkDestroyDescriptorSetLayout(device, descriptorSetLayout, NULL);
+        vkDestroyBuffer(device, uniformBuffer, NULL);
+        vkFreeMemory(device, uniformBufferMemory, NULL);
         vkDestroyBuffer(device, combinedBuffer, NULL);
         vkFreeMemory(device, combinedBufferMemory, NULL);
         vkDestroySemaphore(device, renderFinishedSemaphore, NULL);
